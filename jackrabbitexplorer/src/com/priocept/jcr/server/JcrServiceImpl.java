@@ -21,8 +21,10 @@ import javax.jcr.NodeIterator;
 import javax.jcr.Property;
 import javax.jcr.PropertyIterator;
 import javax.jcr.Repository;
+import javax.jcr.RepositoryException;
 import javax.jcr.Session;
 import javax.jcr.SimpleCredentials;
+import javax.jcr.Value;
 import javax.jcr.nodetype.NodeType;
 import javax.jcr.nodetype.NodeTypeIterator;
 import javax.jcr.query.Query;
@@ -72,12 +74,6 @@ public class JcrServiceImpl extends RemoteServiceServlet implements JcrService {
 
 	public JcrServiceImpl() {
 		super();
-	}
-	
-	private void cleanAllTempFiles() {
-		REAL_ABSOLUTE_PATH = getServletContext().getRealPath("/");
-		deleteDirectory(new File(REAL_ABSOLUTE_PATH + TEMP_FILES));
-		new File (REAL_ABSOLUTE_PATH + TEMP_FILES).mkdir();
 	}
 	
 	/**
@@ -374,34 +370,59 @@ public class JcrServiceImpl extends RemoteServiceServlet implements JcrService {
 				properties = new HashMap<String, String>();
 				for (int j = 0; j < propertyIterator.getSize(); j++) {
 					Property property = propertyIterator.nextProperty();
-					//added a Binary Value text to the jcr:data property, as displaying raw binary in the value cell isn't desirable
-					if (null != property.getName() && property.getName().equalsIgnoreCase("jcr:data")) {
-						properties.put(property.getName() + " (Click to open)", "Binary Value");
-						
-						//Any property of value which starts with http:// will be openable in the frontend 
-					} else if (null != property.getValue() && property.getValue().getString().startsWith("http://")) {
-							properties.put(property.getName() + " (Click to open)", property.getValue().getString());
-					} else {
-						properties.put(property.getName(), property.getValue().getString());
-					}
+					addProperty(property.getName(), property, properties);
 				}
-				if (node.getPath().toString().contains("[") && node.getPath().toString().contains("]")) {
-					String nameWithBrackets = node.getPath().toString().substring( node.getPath().toString().lastIndexOf('/') + 1,  node.getPath().toString().length());
-					newJcrNode = new JcrNode(nameWithBrackets, node.getPath().toString(), node.getPrimaryNodeType()
-							.getName(), properties);
+				final String nodePath = node.getPath();
+				if (nodePath.contains("[") && nodePath.contains("]")) {
+					String nameWithBrackets = nodePath.substring(nodePath.lastIndexOf('/') + 1, nodePath.length());
+					newJcrNode = new JcrNode(nameWithBrackets, nodePath, node.getPrimaryNodeType().getName(),
+							properties);
 				} else {
-					newJcrNode = new JcrNode(node.getName().toString(), node.getPath().toString(), node.getPrimaryNodeType()
-							.getName(), properties);
+					newJcrNode = new JcrNode(node.getName(), nodePath, node.getPrimaryNodeType().getName(), properties);
 				}
 
 				jcrNodeList.add(newJcrNode);
 			}
 		} catch (Exception e) {
-			log.info("Failed fetching Node. " + e.getMessage());
+			log.info("Failed fetching Node. ", e);
 			throw new SerializedException("Failed fetching Node. " + e.getMessage());
 		}
 
 		return jcrNodeList;
+	}
+
+	private void addProperty(final String name, Property property, Map<String, String> properties)
+			throws RepositoryException {
+		if (property.isMultiple()) {
+			Value[] values = property.getValues();
+			if (values != null) {
+				for (int k = 0; k < values.length; k++) {
+					Value v = values[k];
+					addProperty(name + "[" + k + "]", v, properties);
+				}
+			}
+		} else {
+			// added a Binary Value text to the jcr:data property, as displaying raw binary
+			// in the value cell isn't desirable
+			if (null != name && name.equalsIgnoreCase("jcr:data")) {
+				properties.put(name + " (Click to open)", "Binary Value");
+
+				// Any property of value which starts with http:// will be openable in the
+				// frontend
+			} else {
+				final Value value = property.getValue();
+				addProperty(name, value, properties);
+			}
+		}
+	}
+
+	private void addProperty(final String name, final Value value, Map<String, String> properties)
+			throws RepositoryException {
+		if (null != value && value.getString().startsWith("http://")) {
+			properties.put(name + " (Click to open)", value.getString());
+		} else {
+			properties.put(name, value == null ? null : value.getString());
+		}
 	}
 	
 	public List<String> getAvailableNodeTypes() throws SerializedException {
